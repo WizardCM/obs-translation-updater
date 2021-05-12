@@ -1,0 +1,5 @@
+name: "obs-translation-updater"
+description: "Updates the translations and authors of OBS Studio."
+runs:
+  using: "node12"
+  main: "dist/index.js"
