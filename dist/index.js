@@ -13071,7 +13071,7 @@ function desktopFile() {
                     "[" +
                     languageFile.substring(0, languageFile.indexOf(".ini")) +
                     "]=" +
-                    line.substring(line.indexOf('"'), line.lastIndexOf('"')) +
+                    line.substring(line.indexOf('"') + 1, line.lastIndexOf('"')) +
                     "\n";
         }
     }
