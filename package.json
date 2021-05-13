@@ -1,7 +1,8 @@
 {
 	"main": "out/index.js",
 	"scripts": {
-		"build": "tsc -p ./ && removeNPMAbsolutePaths node_modules && ncc build out/index.js -o dist",
+		"build": "eslint --fix src/** && tsc -p ./ && removeNPMAbsolutePaths node_modules && ncc build out/index.js -o dist",
+		"codeStyle": "eslint --fix src/**",
 		"watch": "tsc -watch -p ./",
 		"compile": "tsc -p ./"
 	},
@@ -16,7 +17,15 @@
 		"@types/adm-zip": "^0.4.34",
 		"@types/fs-extra": "^9.0.11",
 		"@types/node": "^15.0.2",
+		"@typescript-eslint/eslint-plugin": "^4.23.0",
+		"@typescript-eslint/parser": "^4.23.0",
 		"@vercel/ncc": "^0.28.5",
+		"eslint": "^7.26.0",
+		"eslint-config-standard": "^16.0.2",
+		"eslint-plugin-import": "^2.22.1",
+		"eslint-plugin-jsdoc": "^34.0.2",
+		"eslint-plugin-node": "^11.1.0",
+		"eslint-plugin-promise": "^4.3.1",
 		"removeNPMAbsolutePaths": "^2.0.0",
 		"typescript": "^4.2.4"
 	}

@@ -9079,6 +9079,837 @@ module.exports = {
 
 /***/ }),
 
+/***/ 8222:
+/***/ ((module, exports, __nccwpck_require__) => {
+
+/* eslint-env browser */
+
+/**
+ * This is the web browser implementation of `debug()`.
+ */
+
+exports.formatArgs = formatArgs;
+exports.save = save;
+exports.load = load;
+exports.useColors = useColors;
+exports.storage = localstorage();
+exports.destroy = (() => {
+	let warned = false;
+
+	return () => {
+		if (!warned) {
+			warned = true;
+			console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+		}
+	};
+})();
+
+/**
+ * Colors.
+ */
+
+exports.colors = [
+	'#0000CC',
+	'#0000FF',
+	'#0033CC',
+	'#0033FF',
+	'#0066CC',
+	'#0066FF',
+	'#0099CC',
+	'#0099FF',
+	'#00CC00',
+	'#00CC33',
+	'#00CC66',
+	'#00CC99',
+	'#00CCCC',
+	'#00CCFF',
+	'#3300CC',
+	'#3300FF',
+	'#3333CC',
+	'#3333FF',
+	'#3366CC',
+	'#3366FF',
+	'#3399CC',
+	'#3399FF',
+	'#33CC00',
+	'#33CC33',
+	'#33CC66',
+	'#33CC99',
+	'#33CCCC',
+	'#33CCFF',
+	'#6600CC',
+	'#6600FF',
+	'#6633CC',
+	'#6633FF',
+	'#66CC00',
+	'#66CC33',
+	'#9900CC',
+	'#9900FF',
+	'#9933CC',
+	'#9933FF',
+	'#99CC00',
+	'#99CC33',
+	'#CC0000',
+	'#CC0033',
+	'#CC0066',
+	'#CC0099',
+	'#CC00CC',
+	'#CC00FF',
+	'#CC3300',
+	'#CC3333',
+	'#CC3366',
+	'#CC3399',
+	'#CC33CC',
+	'#CC33FF',
+	'#CC6600',
+	'#CC6633',
+	'#CC9900',
+	'#CC9933',
+	'#CCCC00',
+	'#CCCC33',
+	'#FF0000',
+	'#FF0033',
+	'#FF0066',
+	'#FF0099',
+	'#FF00CC',
+	'#FF00FF',
+	'#FF3300',
+	'#FF3333',
+	'#FF3366',
+	'#FF3399',
+	'#FF33CC',
+	'#FF33FF',
+	'#FF6600',
+	'#FF6633',
+	'#FF9900',
+	'#FF9933',
+	'#FFCC00',
+	'#FFCC33'
+];
+
+/**
+ * Currently only WebKit-based Web Inspectors, Firefox >= v31,
+ * and the Firebug extension (any Firefox version) are known
+ * to support "%c" CSS customizations.
+ *
+ * TODO: add a `localStorage` variable to explicitly enable/disable colors
+ */
+
+// eslint-disable-next-line complexity
+function useColors() {
+	// NB: In an Electron preload script, document will be defined but not fully
+	// initialized. Since we know we're in Chrome, we'll just detect this case
+	// explicitly
+	if (typeof window !== 'undefined' && window.process && (window.process.type === 'renderer' || window.process.__nwjs)) {
+		return true;
+	}
+
+	// Internet Explorer and Edge do not support colors.
+	if (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
+		return false;
+	}
+
+	// Is webkit? http://stackoverflow.com/a/16459606/376773
+	// document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
+	return (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance) ||
+		// Is firebug? http://stackoverflow.com/a/398120/376773
+		(typeof window !== 'undefined' && window.console && (window.console.firebug || (window.console.exception && window.console.table))) ||
+		// Is firefox >= v31?
+		// https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
+		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31) ||
+		// Double check webkit in userAgent just in case we are in a worker
+		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));
+}
+
+/**
+ * Colorize log arguments if enabled.
+ *
+ * @api public
+ */
+
+function formatArgs(args) {
+	args[0] = (this.useColors ? '%c' : '') +
+		this.namespace +
+		(this.useColors ? ' %c' : ' ') +
+		args[0] +
+		(this.useColors ? '%c ' : ' ') +
+		'+' + module.exports.humanize(this.diff);
+
+	if (!this.useColors) {
+		return;
+	}
+
+	const c = 'color: ' + this.color;
+	args.splice(1, 0, c, 'color: inherit');
+
+	// The final "%c" is somewhat tricky, because there could be other
+	// arguments passed either before or after the %c, so we need to
+	// figure out the correct index to insert the CSS into
+	let index = 0;
+	let lastC = 0;
+	args[0].replace(/%[a-zA-Z%]/g, match => {
+		if (match === '%%') {
+			return;
+		}
+		index++;
+		if (match === '%c') {
+			// We only are interested in the *last* %c
+			// (the user may have provided their own)
+			lastC = index;
+		}
+	});
+
+	args.splice(lastC, 0, c);
+}
+
+/**
+ * Invokes `console.debug()` when available.
+ * No-op when `console.debug` is not a "function".
+ * If `console.debug` is not available, falls back
+ * to `console.log`.
+ *
+ * @api public
+ */
+exports.log = console.debug || console.log || (() => {});
+
+/**
+ * Save `namespaces`.
+ *
+ * @param {String} namespaces
+ * @api private
+ */
+function save(namespaces) {
+	try {
+		if (namespaces) {
+			exports.storage.setItem('debug', namespaces);
+		} else {
+			exports.storage.removeItem('debug');
+		}
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+}
+
+/**
+ * Load `namespaces`.
+ *
+ * @return {String} returns the previously persisted debug modes
+ * @api private
+ */
+function load() {
+	let r;
+	try {
+		r = exports.storage.getItem('debug');
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+
+	// If debug isn't set in LS, and we're in Electron, try to load $DEBUG
+	if (!r && typeof process !== 'undefined' && 'env' in process) {
+		r = process.env.DEBUG;
+	}
+
+	return r;
+}
+
+/**
+ * Localstorage attempts to return the localstorage.
+ *
+ * This is necessary because safari throws
+ * when a user disables cookies/localstorage
+ * and you attempt to access it.
+ *
+ * @return {LocalStorage}
+ * @api private
+ */
+
+function localstorage() {
+	try {
+		// TVMLKit (Apple TV JS Runtime) does not have a window object, just localStorage in the global context
+		// The Browser also has localStorage in the global context.
+		return localStorage;
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+}
+
+module.exports = __nccwpck_require__(6243)(exports);
+
+const {formatters} = module.exports;
+
+/**
+ * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default.
+ */
+
+formatters.j = function (v) {
+	try {
+		return JSON.stringify(v);
+	} catch (error) {
+		return '[UnexpectedJSONParseError]: ' + error.message;
+	}
+};
+
+
+/***/ }),
+
+/***/ 6243:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+/**
+ * This is the common logic for both the Node.js and web browser
+ * implementations of `debug()`.
+ */
+
+function setup(env) {
+	createDebug.debug = createDebug;
+	createDebug.default = createDebug;
+	createDebug.coerce = coerce;
+	createDebug.disable = disable;
+	createDebug.enable = enable;
+	createDebug.enabled = enabled;
+	createDebug.humanize = __nccwpck_require__(900);
+	createDebug.destroy = destroy;
+
+	Object.keys(env).forEach(key => {
+		createDebug[key] = env[key];
+	});
+
+	/**
+	* The currently active debug mode names, and names to skip.
+	*/
+
+	createDebug.names = [];
+	createDebug.skips = [];
+
+	/**
+	* Map of special "%n" handling functions, for the debug "format" argument.
+	*
+	* Valid key names are a single, lower or upper-case letter, i.e. "n" and "N".
+	*/
+	createDebug.formatters = {};
+
+	/**
+	* Selects a color for a debug namespace
+	* @param {String} namespace The namespace string for the for the debug instance to be colored
+	* @return {Number|String} An ANSI color code for the given namespace
+	* @api private
+	*/
+	function selectColor(namespace) {
+		let hash = 0;
+
+		for (let i = 0; i < namespace.length; i++) {
+			hash = ((hash << 5) - hash) + namespace.charCodeAt(i);
+			hash |= 0; // Convert to 32bit integer
+		}
+
+		return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
+	}
+	createDebug.selectColor = selectColor;
+
+	/**
+	* Create a debugger with the given `namespace`.
+	*
+	* @param {String} namespace
+	* @return {Function}
+	* @api public
+	*/
+	function createDebug(namespace) {
+		let prevTime;
+		let enableOverride = null;
+
+		function debug(...args) {
+			// Disabled?
+			if (!debug.enabled) {
+				return;
+			}
+
+			const self = debug;
+
+			// Set `diff` timestamp
+			const curr = Number(new Date());
+			const ms = curr - (prevTime || curr);
+			self.diff = ms;
+			self.prev = prevTime;
+			self.curr = curr;
+			prevTime = curr;
+
+			args[0] = createDebug.coerce(args[0]);
+
+			if (typeof args[0] !== 'string') {
+				// Anything else let's inspect with %O
+				args.unshift('%O');
+			}
+
+			// Apply any `formatters` transformations
+			let index = 0;
+			args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
+				// If we encounter an escaped % then don't increase the array index
+				if (match === '%%') {
+					return '%';
+				}
+				index++;
+				const formatter = createDebug.formatters[format];
+				if (typeof formatter === 'function') {
+					const val = args[index];
+					match = formatter.call(self, val);
+
+					// Now we need to remove `args[index]` since it's inlined in the `format`
+					args.splice(index, 1);
+					index--;
+				}
+				return match;
+			});
+
+			// Apply env-specific formatting (colors, etc.)
+			createDebug.formatArgs.call(self, args);
+
+			const logFn = self.log || createDebug.log;
+			logFn.apply(self, args);
+		}
+
+		debug.namespace = namespace;
+		debug.useColors = createDebug.useColors();
+		debug.color = createDebug.selectColor(namespace);
+		debug.extend = extend;
+		debug.destroy = createDebug.destroy; // XXX Temporary. Will be removed in the next major release.
+
+		Object.defineProperty(debug, 'enabled', {
+			enumerable: true,
+			configurable: false,
+			get: () => enableOverride === null ? createDebug.enabled(namespace) : enableOverride,
+			set: v => {
+				enableOverride = v;
+			}
+		});
+
+		// Env-specific initialization logic for debug instances
+		if (typeof createDebug.init === 'function') {
+			createDebug.init(debug);
+		}
+
+		return debug;
+	}
+
+	function extend(namespace, delimiter) {
+		const newDebug = createDebug(this.namespace + (typeof delimiter === 'undefined' ? ':' : delimiter) + namespace);
+		newDebug.log = this.log;
+		return newDebug;
+	}
+
+	/**
+	* Enables a debug mode by namespaces. This can include modes
+	* separated by a colon and wildcards.
+	*
+	* @param {String} namespaces
+	* @api public
+	*/
+	function enable(namespaces) {
+		createDebug.save(namespaces);
+
+		createDebug.names = [];
+		createDebug.skips = [];
+
+		let i;
+		const split = (typeof namespaces === 'string' ? namespaces : '').split(/[\s,]+/);
+		const len = split.length;
+
+		for (i = 0; i < len; i++) {
+			if (!split[i]) {
+				// ignore empty strings
+				continue;
+			}
+
+			namespaces = split[i].replace(/\*/g, '.*?');
+
+			if (namespaces[0] === '-') {
+				createDebug.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
+			} else {
+				createDebug.names.push(new RegExp('^' + namespaces + '$'));
+			}
+		}
+	}
+
+	/**
+	* Disable debug output.
+	*
+	* @return {String} namespaces
+	* @api public
+	*/
+	function disable() {
+		const namespaces = [
+			...createDebug.names.map(toNamespace),
+			...createDebug.skips.map(toNamespace).map(namespace => '-' + namespace)
+		].join(',');
+		createDebug.enable('');
+		return namespaces;
+	}
+
+	/**
+	* Returns true if the given mode name is enabled, false otherwise.
+	*
+	* @param {String} name
+	* @return {Boolean}
+	* @api public
+	*/
+	function enabled(name) {
+		if (name[name.length - 1] === '*') {
+			return true;
+		}
+
+		let i;
+		let len;
+
+		for (i = 0, len = createDebug.skips.length; i < len; i++) {
+			if (createDebug.skips[i].test(name)) {
+				return false;
+			}
+		}
+
+		for (i = 0, len = createDebug.names.length; i < len; i++) {
+			if (createDebug.names[i].test(name)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	* Convert regexp to namespace
+	*
+	* @param {RegExp} regxep
+	* @return {String} namespace
+	* @api private
+	*/
+	function toNamespace(regexp) {
+		return regexp.toString()
+			.substring(2, regexp.toString().length - 2)
+			.replace(/\.\*\?$/, '*');
+	}
+
+	/**
+	* Coerce `val`.
+	*
+	* @param {Mixed} val
+	* @return {Mixed}
+	* @api private
+	*/
+	function coerce(val) {
+		if (val instanceof Error) {
+			return val.stack || val.message;
+		}
+		return val;
+	}
+
+	/**
+	* XXX DO NOT USE. This is a temporary stub function.
+	* XXX It WILL be removed in the next major release.
+	*/
+	function destroy() {
+		console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+	}
+
+	createDebug.enable(createDebug.load());
+
+	return createDebug;
+}
+
+module.exports = setup;
+
+
+/***/ }),
+
+/***/ 8237:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/**
+ * Detect Electron renderer / nwjs process, which is node, but we should
+ * treat as a browser.
+ */
+
+if (typeof process === 'undefined' || process.type === 'renderer' || process.browser === true || process.__nwjs) {
+	module.exports = __nccwpck_require__(8222);
+} else {
+	module.exports = __nccwpck_require__(5332);
+}
+
+
+/***/ }),
+
+/***/ 5332:
+/***/ ((module, exports, __nccwpck_require__) => {
+
+/**
+ * Module dependencies.
+ */
+
+const tty = __nccwpck_require__(3867);
+const util = __nccwpck_require__(1669);
+
+/**
+ * This is the Node.js implementation of `debug()`.
+ */
+
+exports.init = init;
+exports.log = log;
+exports.formatArgs = formatArgs;
+exports.save = save;
+exports.load = load;
+exports.useColors = useColors;
+exports.destroy = util.deprecate(
+	() => {},
+	'Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.'
+);
+
+/**
+ * Colors.
+ */
+
+exports.colors = [6, 2, 3, 4, 5, 1];
+
+try {
+	// Optional dependency (as in, doesn't need to be installed, NOT like optionalDependencies in package.json)
+	// eslint-disable-next-line import/no-extraneous-dependencies
+	const supportsColor = __nccwpck_require__(9318);
+
+	if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
+		exports.colors = [
+			20,
+			21,
+			26,
+			27,
+			32,
+			33,
+			38,
+			39,
+			40,
+			41,
+			42,
+			43,
+			44,
+			45,
+			56,
+			57,
+			62,
+			63,
+			68,
+			69,
+			74,
+			75,
+			76,
+			77,
+			78,
+			79,
+			80,
+			81,
+			92,
+			93,
+			98,
+			99,
+			112,
+			113,
+			128,
+			129,
+			134,
+			135,
+			148,
+			149,
+			160,
+			161,
+			162,
+			163,
+			164,
+			165,
+			166,
+			167,
+			168,
+			169,
+			170,
+			171,
+			172,
+			173,
+			178,
+			179,
+			184,
+			185,
+			196,
+			197,
+			198,
+			199,
+			200,
+			201,
+			202,
+			203,
+			204,
+			205,
+			206,
+			207,
+			208,
+			209,
+			214,
+			215,
+			220,
+			221
+		];
+	}
+} catch (error) {
+	// Swallow - we only care if `supports-color` is available; it doesn't have to be.
+}
+
+/**
+ * Build up the default `inspectOpts` object from the environment variables.
+ *
+ *   $ DEBUG_COLORS=no DEBUG_DEPTH=10 DEBUG_SHOW_HIDDEN=enabled node script.js
+ */
+
+exports.inspectOpts = Object.keys(process.env).filter(key => {
+	return /^debug_/i.test(key);
+}).reduce((obj, key) => {
+	// Camel-case
+	const prop = key
+		.substring(6)
+		.toLowerCase()
+		.replace(/_([a-z])/g, (_, k) => {
+			return k.toUpperCase();
+		});
+
+	// Coerce string value into JS value
+	let val = process.env[key];
+	if (/^(yes|on|true|enabled)$/i.test(val)) {
+		val = true;
+	} else if (/^(no|off|false|disabled)$/i.test(val)) {
+		val = false;
+	} else if (val === 'null') {
+		val = null;
+	} else {
+		val = Number(val);
+	}
+
+	obj[prop] = val;
+	return obj;
+}, {});
+
+/**
+ * Is stdout a TTY? Colored output is enabled when `true`.
+ */
+
+function useColors() {
+	return 'colors' in exports.inspectOpts ?
+		Boolean(exports.inspectOpts.colors) :
+		tty.isatty(process.stderr.fd);
+}
+
+/**
+ * Adds ANSI color escape codes if enabled.
+ *
+ * @api public
+ */
+
+function formatArgs(args) {
+	const {namespace: name, useColors} = this;
+
+	if (useColors) {
+		const c = this.color;
+		const colorCode = '\u001B[3' + (c < 8 ? c : '8;5;' + c);
+		const prefix = `  ${colorCode};1m${name} \u001B[0m`;
+
+		args[0] = prefix + args[0].split('\n').join('\n' + prefix);
+		args.push(colorCode + 'm+' + module.exports.humanize(this.diff) + '\u001B[0m');
+	} else {
+		args[0] = getDate() + name + ' ' + args[0];
+	}
+}
+
+function getDate() {
+	if (exports.inspectOpts.hideDate) {
+		return '';
+	}
+	return new Date().toISOString() + ' ';
+}
+
+/**
+ * Invokes `util.format()` with the specified arguments and writes to stderr.
+ */
+
+function log(...args) {
+	return process.stderr.write(util.format(...args) + '\n');
+}
+
+/**
+ * Save `namespaces`.
+ *
+ * @param {String} namespaces
+ * @api private
+ */
+function save(namespaces) {
+	if (namespaces) {
+		process.env.DEBUG = namespaces;
+	} else {
+		// If you set a process.env field to null or undefined, it gets cast to the
+		// string 'null' or 'undefined'. Just delete instead.
+		delete process.env.DEBUG;
+	}
+}
+
+/**
+ * Load `namespaces`.
+ *
+ * @return {String} returns the previously persisted debug modes
+ * @api private
+ */
+
+function load() {
+	return process.env.DEBUG;
+}
+
+/**
+ * Init logic for `debug` instances.
+ *
+ * Create a new `inspectOpts` object in case `useColors` is set
+ * differently for a particular `debug` instance.
+ */
+
+function init(debug) {
+	debug.inspectOpts = {};
+
+	const keys = Object.keys(exports.inspectOpts);
+	for (let i = 0; i < keys.length; i++) {
+		debug.inspectOpts[keys[i]] = exports.inspectOpts[keys[i]];
+	}
+}
+
+module.exports = __nccwpck_require__(6243)(exports);
+
+const {formatters} = module.exports;
+
+/**
+ * Map %o to `util.inspect()`, all on a single line.
+ */
+
+formatters.o = function (v) {
+	this.inspectOpts.colors = this.useColors;
+	return util.inspect(v, this.inspectOpts)
+		.split('\n')
+		.map(str => str.trim())
+		.join(' ');
+};
+
+/**
+ * Map %O to `util.inspect()`, allowing multiple lines if needed.
+ */
+
+formatters.O = function (v) {
+	this.inspectOpts.colors = this.useColors;
+	return util.inspect(v, this.inspectOpts);
+};
+
+
+/***/ }),
+
 /***/ 1133:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -9088,7 +9919,7 @@ module.exports = function () {
   if (!debug) {
     try {
       /* eslint global-require: off */
-      debug = __nccwpck_require__(9975)("follow-redirects");
+      debug = __nccwpck_require__(8237)("follow-redirects");
     }
     catch (error) {
       debug = function () { /* */ };
@@ -12531,6 +13362,22 @@ function patch (fs) {
 
 /***/ }),
 
+/***/ 1621:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = (flag, argv = process.argv) => {
+	const prefix = flag.startsWith('-') ? '' : (flag.length === 1 ? '-' : '--');
+	const position = argv.indexOf(prefix + flag);
+	const terminatorPosition = argv.indexOf('--');
+	return position !== -1 && (terminatorPosition === -1 || position < terminatorPosition);
+};
+
+
+/***/ }),
+
 /***/ 6160:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -12647,6 +13494,318 @@ module.exports = { stringify, stripBom }
 
 /***/ }),
 
+/***/ 900:
+/***/ ((module) => {
+
+/**
+ * Helpers.
+ */
+
+var s = 1000;
+var m = s * 60;
+var h = m * 60;
+var d = h * 24;
+var w = d * 7;
+var y = d * 365.25;
+
+/**
+ * Parse or format the given `val`.
+ *
+ * Options:
+ *
+ *  - `long` verbose formatting [false]
+ *
+ * @param {String|Number} val
+ * @param {Object} [options]
+ * @throws {Error} throw an error if val is not a non-empty string or a number
+ * @return {String|Number}
+ * @api public
+ */
+
+module.exports = function(val, options) {
+  options = options || {};
+  var type = typeof val;
+  if (type === 'string' && val.length > 0) {
+    return parse(val);
+  } else if (type === 'number' && isFinite(val)) {
+    return options.long ? fmtLong(val) : fmtShort(val);
+  }
+  throw new Error(
+    'val is not a non-empty string or a valid number. val=' +
+      JSON.stringify(val)
+  );
+};
+
+/**
+ * Parse the given `str` and return milliseconds.
+ *
+ * @param {String} str
+ * @return {Number}
+ * @api private
+ */
+
+function parse(str) {
+  str = String(str);
+  if (str.length > 100) {
+    return;
+  }
+  var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
+    str
+  );
+  if (!match) {
+    return;
+  }
+  var n = parseFloat(match[1]);
+  var type = (match[2] || 'ms').toLowerCase();
+  switch (type) {
+    case 'years':
+    case 'year':
+    case 'yrs':
+    case 'yr':
+    case 'y':
+      return n * y;
+    case 'weeks':
+    case 'week':
+    case 'w':
+      return n * w;
+    case 'days':
+    case 'day':
+    case 'd':
+      return n * d;
+    case 'hours':
+    case 'hour':
+    case 'hrs':
+    case 'hr':
+    case 'h':
+      return n * h;
+    case 'minutes':
+    case 'minute':
+    case 'mins':
+    case 'min':
+    case 'm':
+      return n * m;
+    case 'seconds':
+    case 'second':
+    case 'secs':
+    case 'sec':
+    case 's':
+      return n * s;
+    case 'milliseconds':
+    case 'millisecond':
+    case 'msecs':
+    case 'msec':
+    case 'ms':
+      return n;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Short format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function fmtShort(ms) {
+  var msAbs = Math.abs(ms);
+  if (msAbs >= d) {
+    return Math.round(ms / d) + 'd';
+  }
+  if (msAbs >= h) {
+    return Math.round(ms / h) + 'h';
+  }
+  if (msAbs >= m) {
+    return Math.round(ms / m) + 'm';
+  }
+  if (msAbs >= s) {
+    return Math.round(ms / s) + 's';
+  }
+  return ms + 'ms';
+}
+
+/**
+ * Long format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function fmtLong(ms) {
+  var msAbs = Math.abs(ms);
+  if (msAbs >= d) {
+    return plural(ms, msAbs, d, 'day');
+  }
+  if (msAbs >= h) {
+    return plural(ms, msAbs, h, 'hour');
+  }
+  if (msAbs >= m) {
+    return plural(ms, msAbs, m, 'minute');
+  }
+  if (msAbs >= s) {
+    return plural(ms, msAbs, s, 'second');
+  }
+  return ms + ' ms';
+}
+
+/**
+ * Pluralization helper.
+ */
+
+function plural(ms, msAbs, n, name) {
+  var isPlural = msAbs >= n * 1.5;
+  return Math.round(ms / n) + ' ' + name + (isPlural ? 's' : '');
+}
+
+
+/***/ }),
+
+/***/ 9318:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+const os = __nccwpck_require__(2087);
+const tty = __nccwpck_require__(3867);
+const hasFlag = __nccwpck_require__(1621);
+
+const {env} = process;
+
+let forceColor;
+if (hasFlag('no-color') ||
+	hasFlag('no-colors') ||
+	hasFlag('color=false') ||
+	hasFlag('color=never')) {
+	forceColor = 0;
+} else if (hasFlag('color') ||
+	hasFlag('colors') ||
+	hasFlag('color=true') ||
+	hasFlag('color=always')) {
+	forceColor = 1;
+}
+
+if ('FORCE_COLOR' in env) {
+	if (env.FORCE_COLOR === 'true') {
+		forceColor = 1;
+	} else if (env.FORCE_COLOR === 'false') {
+		forceColor = 0;
+	} else {
+		forceColor = env.FORCE_COLOR.length === 0 ? 1 : Math.min(parseInt(env.FORCE_COLOR, 10), 3);
+	}
+}
+
+function translateLevel(level) {
+	if (level === 0) {
+		return false;
+	}
+
+	return {
+		level,
+		hasBasic: true,
+		has256: level >= 2,
+		has16m: level >= 3
+	};
+}
+
+function supportsColor(haveStream, streamIsTTY) {
+	if (forceColor === 0) {
+		return 0;
+	}
+
+	if (hasFlag('color=16m') ||
+		hasFlag('color=full') ||
+		hasFlag('color=truecolor')) {
+		return 3;
+	}
+
+	if (hasFlag('color=256')) {
+		return 2;
+	}
+
+	if (haveStream && !streamIsTTY && forceColor === undefined) {
+		return 0;
+	}
+
+	const min = forceColor || 0;
+
+	if (env.TERM === 'dumb') {
+		return min;
+	}
+
+	if (process.platform === 'win32') {
+		// Windows 10 build 10586 is the first Windows release that supports 256 colors.
+		// Windows 10 build 14931 is the first release that supports 16m/TrueColor.
+		const osRelease = os.release().split('.');
+		if (
+			Number(osRelease[0]) >= 10 &&
+			Number(osRelease[2]) >= 10586
+		) {
+			return Number(osRelease[2]) >= 14931 ? 3 : 2;
+		}
+
+		return 1;
+	}
+
+	if ('CI' in env) {
+		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI', 'GITHUB_ACTIONS', 'BUILDKITE'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
+			return 1;
+		}
+
+		return min;
+	}
+
+	if ('TEAMCITY_VERSION' in env) {
+		return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
+	}
+
+	if (env.COLORTERM === 'truecolor') {
+		return 3;
+	}
+
+	if ('TERM_PROGRAM' in env) {
+		const version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
+
+		switch (env.TERM_PROGRAM) {
+			case 'iTerm.app':
+				return version >= 3 ? 3 : 2;
+			case 'Apple_Terminal':
+				return 2;
+			// No default
+		}
+	}
+
+	if (/-256(color)?$/i.test(env.TERM)) {
+		return 2;
+	}
+
+	if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
+		return 1;
+	}
+
+	if ('COLORTERM' in env) {
+		return 1;
+	}
+
+	return min;
+}
+
+function getSupportLevel(stream) {
+	const level = supportsColor(stream, stream && stream.isTTY);
+	return translateLevel(level);
+}
+
+module.exports = {
+	supportsColor: getSupportLevel,
+	stdout: translateLevel(supportsColor(true, tty.isatty(1))),
+	stderr: translateLevel(supportsColor(true, tty.isatty(2)))
+};
+
+
+/***/ }),
+
 /***/ 9046:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -12679,11 +13838,80 @@ exports.fromPromise = function (fn) {
 
 /***/ }),
 
-/***/ 9975:
-/***/ ((module) => {
+/***/ 7413:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
-module.exports = eval("require")("debug");
+"use strict";
 
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.submodules = exports.tempDir = exports.rootDir = exports.projectId = void 0;
+const path_1 = __nccwpck_require__(5622);
+exports.projectId = 51028;
+exports.rootDir = path_1.resolve('.');
+exports.tempDir = path_1.resolve(exports.rootDir, 'obs-translation-updater');
+exports.submodules = ['enc-amf', 'obs-browser', 'obs-vst'];
+//# sourceMappingURL=constants.js.map
+
+/***/ }),
+
+/***/ 8421:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const strings = {
+    committer: {
+        name: 'Translation Updater',
+        email: '<>'
+    },
+    commit: {
+        title: 'Update translations from Crowdin'
+    },
+    heading: {
+        authors: 'Original Author: Hugh Bailey ("Jim")\n\nContributors are sorted by their amount of commits / translated strings.\n\n',
+        contributors: 'Contributors',
+        translators: 'Translators'
+    },
+    filename: {
+        AUTHORS: 'AUTHORS',
+        enUS: 'en-US.ini'
+    }
+};
+exports.default = strings;
+//# sourceMappingURL=strings.js.map
+
+/***/ }),
+
+/***/ 360:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.execute = exports.wait = void 0;
+const child_process_1 = __nccwpck_require__(3129);
+/**
+ *
+ * @param millesec Number of milliseconds to wait
+ * @returns Promise resolution after the set time
+ */
+function wait(millesec) {
+    return new Promise(resolve => setTimeout(resolve, millesec));
+}
+exports.wait = wait;
+/**
+ * Use execSync to execute a command
+ *
+ * @param command Command line command to run
+ * @param option execSync options
+ * @returns The stdout from the command
+ */
+function execute(command, option) {
+    return child_process_1.execSync(command, option).toString();
+}
+exports.execute = execute;
+//# sourceMappingURL=utils.js.map
 
 /***/ }),
 
@@ -12783,6 +14011,14 @@ module.exports = require("stream");;
 
 /***/ }),
 
+/***/ 3867:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("tty");;
+
+/***/ }),
+
 /***/ 8835:
 /***/ ((module) => {
 
@@ -12850,90 +14086,104 @@ var __webpack_exports__ = {};
 var exports = __webpack_exports__;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const AXIOS = __nccwpck_require__(6545).default;
-const EXEC = __nccwpck_require__(3129);
-const PATH = __nccwpck_require__(5622);
-const FSE = __nccwpck_require__(5630);
-const ZIP = __nccwpck_require__(6761);
-const CORE = __nccwpck_require__(2186);
+const axios_1 = __nccwpck_require__(6545);
+const path = __nccwpck_require__(5622);
+const fse = __nccwpck_require__(5630);
+const Zip = __nccwpck_require__(6761);
+const core = __nccwpck_require__(2186);
 const crowdin_api_client_1 = __nccwpck_require__(4296);
+const utils_1 = __nccwpck_require__(360);
+const constants_1 = __nccwpck_require__(7413);
+const strings_1 = __nccwpck_require__(8421);
 const { reportsApi, translationsApi, usersApi, projectsGroupsApi } = new crowdin_api_client_1.default({
     token: process.env.CROWDIN_PERSONAL_TOKEN
 });
-const projectId = 51028;
-const rootDir = PATH.resolve(".");
-const tempDir = PATH.resolve(rootDir, "obs-translation-updater");
-function wait(millesec) {
-    return new Promise(resolve => setTimeout(resolve, millesec));
-}
-function execute(command, option) {
-    return EXEC.execSync(command, option).toString();
-}
 /*
 Everything is broken down into smaller steps which makes it easier
 to maintain and test. Just comment out the call of a step.
 It also allows a controlled step-by-step
 and concurrent execution of functions.
 */
+/**
+ * Clears a directory excluding `en-US.ini` files.
+ *
+ * @param path Directory to clear
+ */
 function emptyTranslationDir(path) {
-    for (const file of FSE.readdirSync(path)) {
-        if (file !== "en-US.ini") {
-            FSE.removeSync(file);
+    for (const file of fse.readdirSync(path)) {
+        if (file !== strings_1.default.filename.enUS) {
+            fse.removeSync(file);
         }
     }
 }
-// Remove dropped languages that would've otherwise been kept.
+/**
+ * Remove all translations to prevent keeping dropped languages.
+ */
 function removePreviousTranslations() {
-    emptyTranslationDir(PATH.join("UI", "data", "locale"));
-    emptyTranslationDir(PATH.join("plugins", "enc-amf", "resources", "locale"));
-    for (const file of FSE.readdirSync("plugins")) {
-        const dirPath = PATH.join("plugins", file, "data", "locale");
-        if (FSE.existsSync(dirPath) && FSE.lstatSync(dirPath).isDirectory()) {
+    emptyTranslationDir(path.join('UI', 'data', 'locale'));
+    emptyTranslationDir(path.join('plugins', 'enc-amf', 'resources', 'locale'));
+    for (const file of fse.readdirSync('plugins')) {
+        const dirPath = path.join('plugins', file, 'data', 'locale');
+        if (fse.existsSync(dirPath) && fse.lstatSync(dirPath).isDirectory()) {
             emptyTranslationDir(dirPath);
         }
     }
 }
+/**
+ * Uses `git shortlog` to get a list Git contributors.
+ *
+ * @returns List of contributors, with heading
+ */
 function getGitContributors() {
-    let output = "Contributors:\n";
-    for (var line of execute("git shortlog --all -sn --no-merges").split("\n")) {
-        const contributor = line.substring(line.indexOf("\t") + 1);
-        if (contributor !== "Translation Updater") {
-            output += " " + line.substring(line.indexOf("\t") + 1) + "\n";
+    let output = `${strings_1.default.heading.contributors}:\n`;
+    for (const line of utils_1.execute('git shortlog --all -sn --no-merges').split('\n')) {
+        const contributor = line.substring(line.indexOf('\t') + 1);
+        if (contributor !== strings_1.default.committer.name) {
+            output += ' ' + line.substring(line.indexOf('\t') + 1) + '\n';
         }
     }
     return output;
 }
+/**
+ * Gets all translators from the Crowdin project.
+ *
+ * @returns {Promise<string>} List of translators, with heading
+ */
 async function getTranslators() {
     // blocked users
     const blockedUsers = [];
-    for (const blockedUser of (await usersApi.listProjectMembers(projectId, undefined, crowdin_api_client_1.UsersModel.Role.BLOCKED, undefined, 500)).data) {
+    for (const blockedUser of (await usersApi.listProjectMembers(constants_1.projectId, undefined, crowdin_api_client_1.UsersModel.Role.BLOCKED, undefined, 500)).data) {
         blockedUsers.push(blockedUser.data.id);
     }
     // report
     const reportRequests = [];
-    for (const language of (await projectsGroupsApi.getProject(projectId)).data.targetLanguageIds) {
+    for (const language of (await projectsGroupsApi.getProject(constants_1.projectId)).data.targetLanguageIds) {
+        /**
+         *
+         * @returns Crowdin report of "top members"
+         */
         async function reportRequest() {
-            const { status: reportStatus, identifier: reportId } = (await reportsApi.generateReport(projectId, {
-                name: "top-members",
+            const { status: reportStatus, identifier: reportId } = (await reportsApi.generateReport(constants_1.projectId, {
+                name: 'top-members',
                 schema: {
                     unit: crowdin_api_client_1.ReportsModel.Unit.STRINGS,
                     format: crowdin_api_client_1.ReportsModel.Format.JSON,
-                    dateFrom: "2014-01-01T00:00:00+00:00",
-                    dateTo: "2030-01-01T00:00:00+00:00",
+                    dateFrom: '2014-01-01T00:00:00+00:00',
+                    dateTo: '2030-01-01T00:00:00+00:00',
                     languageId: language
                 }
             })).data;
-            let finished = reportStatus === "finished";
+            let finished = reportStatus === 'finished';
             while (!finished) {
-                await wait(3000);
-                finished = (await reportsApi.checkReportStatus(projectId, reportId)).data.status === "finished";
+                await utils_1.wait(3000);
+                finished = (await reportsApi.checkReportStatus(constants_1.projectId, reportId)).data.status === 'finished';
             }
-            return (await AXIOS.get((await reportsApi.downloadReport(projectId, reportId)).data.url)).data;
+            return (await axios_1.default.get((await reportsApi.downloadReport(constants_1.projectId, reportId)).data.url)).data;
         }
         reportRequests.push(reportRequest);
     }
     const topMembers = new Map();
-    for (const reportData of await Promise.all(reportRequests.map(a => a()))) {
+    for (const reportData of await Promise.all(reportRequests.map(async (a) => await a()))) {
         const languageName = reportData.language.name;
         let members;
         if (topMembers.has(languageName)) {
@@ -12945,7 +14195,7 @@ async function getTranslators() {
         for (const user of reportData.data) {
             const fullName = user.user.fullName;
             // don't list deleted and blocked accounts
-            if (fullName === "REMOVED_USER" || blockedUsers.includes(parseInt(user.user.id))) {
+            if (fullName === 'REMOVED_USER' || blockedUsers.includes(Number(user.user.id))) {
                 continue;
             }
             if (user.translated === 0 && user.approved === 0) {
@@ -12955,127 +14205,147 @@ async function getTranslators() {
         }
         topMembers.set(languageName, members);
     }
-    let output = "Translators:\n";
+    let output = `${strings_1.default.heading.translators}:\n`;
     for (const language of new Map([...topMembers].sort((a, b) => String(a[0]).localeCompare(b[0]))).keys()) {
-        output += " " + language + ":\n";
+        output += ' ' + language + ':\n';
         for (const user of topMembers.get(language)) {
-            output += "  " + user + "\n";
+            output += '  ' + user + '\n';
         }
     }
     return output;
 }
+/**
+ * Builds the Crowidn project, trims the translation files and moves them to their directories.
+ *
+ * @param skipBuildCreation Skips the build creation.
+ */
 async function projectBuild(skipBuildCreation) {
     let buildId = -1;
     if (skipBuildCreation) {
-        const { id, status } = (await translationsApi.listProjectBuilds(projectId, undefined, 1)).data[0].data;
-        if (status === "finished") {
+        const { id, status } = (await translationsApi.listProjectBuilds(constants_1.projectId, undefined, 1)).data[0].data;
+        if (status === 'finished') {
             buildId = id;
         }
     }
     if (buildId === -1) {
-        const { id, status } = (await translationsApi.buildProject(projectId, { skipUntranslatedStrings: true })).data;
-        let finished = status === "finished";
+        const { id, status } = (await translationsApi.buildProject(constants_1.projectId, { skipUntranslatedStrings: true })).data;
+        let finished = status === 'finished';
         while (!finished) {
-            await wait(3000);
-            finished = (await translationsApi.checkBuildStatus(projectId, id)).data.status === "finished";
+            await utils_1.wait(3000);
+            finished = (await translationsApi.checkBuildStatus(constants_1.projectId, id)).data.status === 'finished';
         }
         buildId = id;
     }
-    const zip = new ZIP((await AXIOS.get((await translationsApi.downloadTranslations(projectId, buildId)).data.url, { responseType: "arraybuffer" })).data);
-    FSE.mkdirSync(tempDir);
-    for (const zipEntry of zip.getEntries()) {
+    const zipFile = new Zip((await axios_1.default.get((await translationsApi.downloadTranslations(constants_1.projectId, buildId)).data.url, { responseType: 'arraybuffer' })).data);
+    fse.mkdirSync(constants_1.tempDir);
+    for (const zipEntry of zipFile.getEntries()) {
         if (zipEntry.isDirectory) {
-            FSE.mkdirSync(PATH.join(tempDir, zipEntry.entryName));
+            fse.mkdirSync(path.join(constants_1.tempDir, zipEntry.entryName));
         }
         // remove all empty lines
-        let fileContent = zip.readAsText(zipEntry).trim();
-        while (fileContent.includes("\r\n")) {
-            fileContent = fileContent.replace("\r\n", "\n");
+        let fileContent = zipFile.readAsText(zipEntry).trim();
+        while (fileContent.includes('\r\n')) {
+            fileContent = fileContent.replace('\r\n', '\n');
         }
-        while (fileContent.includes("\n\n")) {
-            fileContent = fileContent.replace("\n\n", "\n");
+        while (fileContent.includes('\n\n')) {
+            fileContent = fileContent.replace('\n\n', '\n');
         }
         // discard empty files
         if (fileContent.length === 0) {
             continue;
         }
-        FSE.writeFileSync(PATH.join(tempDir, zipEntry.entryName), fileContent + "\n");
+        fse.writeFileSync(path.join(constants_1.tempDir, zipEntry.entryName), fileContent + '\n');
     }
-    FSE.removeSync(PATH.join(tempDir, "Website"));
-    FSE.moveSync(PATH.join(tempDir, "enc-amf"), PATH.join(tempDir, "plugins", "enc-amf"));
-    FSE.moveSync(PATH.join(tempDir, "obs-browser"), PATH.join(tempDir, "plugins", "obs-browser"));
-    FSE.moveSync(PATH.join(tempDir, "obs-vst"), PATH.join(tempDir, "plugins", "obs-vst"));
-    FSE.copySync(PATH.join(tempDir, "UI"), "UI");
-    FSE.copySync(PATH.join(tempDir, "plugins"), "plugins");
+    fse.removeSync(path.join(constants_1.tempDir, 'Website'));
+    fse.moveSync(path.join(constants_1.tempDir, 'enc-amf'), path.join(constants_1.tempDir, 'plugins', 'enc-amf'));
+    fse.moveSync(path.join(constants_1.tempDir, 'obs-browser'), path.join(constants_1.tempDir, 'plugins', 'obs-browser'));
+    fse.moveSync(path.join(constants_1.tempDir, 'obs-vst'), path.join(constants_1.tempDir, 'plugins', 'obs-vst'));
+    fse.copySync(path.join(constants_1.tempDir, 'UI'), 'UI');
+    fse.copySync(path.join(constants_1.tempDir, 'plugins'), 'plugins');
 }
+/**
+ * Build the final string to be saved to the AUTHORS file.
+ *
+ * @param gitContributors Output of getGitContributors()
+ * @param translators  Output of getTranslators()
+ */
 function generateAuthors(gitContributors, translators) {
-    FSE.writeFileSync("AUTHORS", `Original Author: Hugh Bailey ("Jim")\n\nContributors are sorted by their amount of commits / translated strings.\n\n${gitContributors}${translators}`);
+    fse.writeFileSync(strings_1.default.filename.AUTHORS, `${strings_1.default.heading.authors}${gitContributors}${translators}`);
 }
-const submodules = ["enc-amf", "obs-browser", "obs-vst"];
-let detachedSubmodules = [];
+const detachedSubmodules = [];
+/**
+ * Finds submodules uneven with the main repository.
+ */
 function prepareBuild() {
-    for (const submodule of submodules) {
-        process.chdir(PATH.join(rootDir, "plugins", submodule));
-        if (execute("git diff master HEAD").length !== 0) {
+    for (const submodule of constants_1.submodules) {
+        process.chdir(path.join(constants_1.rootDir, 'plugins', submodule));
+        if (utils_1.execute('git diff master HEAD').length !== 0) {
             detachedSubmodules.push(submodule);
         }
-        execute("git checkout master");
+        utils_1.execute('git checkout master');
     }
-    process.chdir(rootDir);
+    process.chdir(constants_1.rootDir);
 }
+/**
+ * Pushes all changes to the submodules and the main repository.
+ */
 function pushChanges() {
-    execute("git config --global user.name 'Translation Updater'");
-    execute("git config --global user.email '<>'");
-    for (const submodule of submodules) {
-        process.chdir(PATH.join(rootDir, "plugins", submodule));
-        if (execute("git status --porcelain").length === 0) {
+    utils_1.execute(`git config --global user.name '${strings_1.default.committer.name}'`);
+    utils_1.execute(`git config --global user.email '${strings_1.default.committer.email}'`);
+    for (const submodule of constants_1.submodules) {
+        process.chdir(path.join(constants_1.rootDir, 'plugins', submodule));
+        if (utils_1.execute('git status --porcelain').length === 0) {
             continue;
         }
-        execute("git add .");
-        execute("git commit -m 'Update translations from Crowdin'");
-        execute("git push");
+        utils_1.execute('git add .');
+        utils_1.execute(`git commit -m '${strings_1.default.commit.title}'`);
+        utils_1.execute('git push');
     }
-    process.chdir(rootDir);
-    execute("git add .");
+    process.chdir(constants_1.rootDir);
+    utils_1.execute('git add .');
     for (const submodule of detachedSubmodules) {
-        execute("git reset -- plugins/" + submodule);
-        console.log(submodule + " has commits not pushed to the main repository. Only pushing to submodule.");
+        utils_1.execute('git reset -- plugins/' + submodule);
+        console.log(submodule + ' has commits not pushed to the main repository. Only pushing to submodule.');
     }
-    if (execute("git status --porcelain").length === 0) {
-        console.log("No changes in main repository. Skipping push.");
+    if (utils_1.execute('git status --porcelain').length === 0) {
+        console.log('No changes in main repository. Skipping push.');
         return;
     }
-    execute("git commit -m 'Update translations from Crowdin'");
-    execute("git push");
+    utils_1.execute(`git commit -m '${strings_1.default.commit.title}'`);
+    utils_1.execute('git push');
 }
+/**
+ * Generate translated `com.obsproject.Studio.desktop` file.
+ */
 function desktopFile() {
-    const desktopFile = FSE.readFileSync(PATH.join("UI", "xdg-data", "com.obsproject.Studio.desktop"), "utf-8").trim();
-    let result = "";
-    for (const line of desktopFile.split("\n")) {
+    const filePath = path.join('UI', 'xdg-data', 'com.obsproject.Studio.desktop');
+    const desktopFile = fse.readFileSync(filePath, 'utf-8').trim();
+    let result = '';
+    for (const line of desktopFile.split('\n')) {
         if (line.length === 0) {
             continue;
         }
-        if (!(line.startsWith("GenericName[") || line.startsWith("Comment["))) {
-            result += line + "\n";
+        if (!(line.startsWith('GenericName[') || line.startsWith('Comment['))) {
+            result += line + '\n';
         }
     }
-    result += "\n";
-    for (const languageFile of FSE.readdirSync(PATH.join(tempDir, "desktop-entry"))) {
-        const languageFileContent = FSE.readFileSync(PATH.join(tempDir, "desktop-entry", languageFile), "utf-8").trim();
+    result += '\n';
+    for (const languageFile of fse.readdirSync(path.join(constants_1.tempDir, 'desktop-entry'))) {
+        const languageFileContent = fse.readFileSync(path.join(constants_1.tempDir, 'desktop-entry', languageFile), 'utf-8').trim();
         if (languageFileContent.length === 0) {
             continue;
         }
-        for (const line of languageFileContent.split("\n")) {
+        for (const line of languageFileContent.split('\n')) {
             result +=
-                line.substring(0, line.indexOf("=")) +
-                    "[" +
-                    languageFile.substring(0, languageFile.indexOf(".ini")) +
-                    "]=" +
+                line.substring(0, line.indexOf('=')) +
+                    '[' +
+                    languageFile.substring(0, languageFile.indexOf('.ini')) +
+                    ']=' +
                     line.substring(line.indexOf('"') + 1, line.lastIndexOf('"')) +
-                    "\n";
+                    '\n';
         }
     }
-    FSE.writeFileSync(PATH.join("UI", "xdg-data", "com.obsproject.Studio.desktop"), result);
+    fse.writeFileSync(filePath, result);
 }
 (async () => {
     try {
@@ -13083,12 +14353,12 @@ function desktopFile() {
         prepareBuild();
         await Promise.all([generateAuthors(getGitContributors(), await getTranslators()), projectBuild(true)]);
         desktopFile();
-        FSE.removeSync(tempDir);
+        fse.removeSync(constants_1.tempDir);
         pushChanges();
     }
     catch (error) {
         console.error(error);
-        CORE.setFailed(error);
+        core.setFailed(error);
     }
 })();
 //# sourceMappingURL=index.js.map
